@@ -12,3 +12,6 @@ neutralino.js
 .storage
 *.log
 .tmp/
+
+# settings file
+stop-wandering-on-windows-settings.ini
