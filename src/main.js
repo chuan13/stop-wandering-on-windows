@@ -23,15 +23,26 @@ function debug(message) {
 
 // ===== 初始化 =====
 Neutralino.init();
-setTray();
-Neutralino.events.on("trayMenuItemClicked", onTrayClicked);
-Neutralino.events.on("windowClose", () => {
-    Neutralino.app.exit();
+
+Neutralino.events.on("ready", async () => {
+    debug('Neutralino 準備就緒！');
+    
+    // 設置系統托盤
+    setTray();
+    
+    // 註冊事件監聽
+    Neutralino.events.on("trayMenuItemClicked", onTrayClicked);
+    Neutralino.events.on("windowClose", () => {
+        Neutralino.app.exit();
+    });
+
+    // 載入設定並啟動定時器
+    await loadSettings();
+    timer();
+    setInterval(timer, 1000);  // 每秒行動
+    
+    debug('初始化成功！');
 });
-loadSettings();
-timer();
-setInterval(timer, 1000);  // 每秒行動
-debug('初始化成功！');
 
 
 // ===== 載入設定檔 =====
@@ -39,7 +50,11 @@ debug('初始化成功！');
 /** 載入設定檔：stop-wandering-on-windows-settings.ini */
 async function loadSettings() {
     try {
-        const data = await Neutralino.filesystem.readFile('./stop-wandering-on-windows-settings.ini');
+        // 使用 NL_PATH 獲取程式所在目錄的絕對路徑，避免開機啟動時工作目錄錯誤
+        const settingsPath = `${NL_PATH}/stop-wandering-on-windows-settings.ini`;
+        debug(`正在從此路徑讀取設定檔：${settingsPath}`);
+        
+        const data = await Neutralino.filesystem.readFile(settingsPath);
         const lines = data.split('\n');
         for (let line of lines) {
             line = line.trim();
@@ -49,7 +64,8 @@ async function loadSettings() {
             debug(`觸發時間：${String(triggerHour).padStart(2, '0')}:${String(triggerMinute).padStart(2, '0')}:${String(triggerSecond).padStart(2, '0')}`);
         }
     } catch (error) {
-        Neutralino.debug.log('設定檔 stop-wandering-on-windows-settings.ini 不存在！', 'WARNING');
+        Neutralino.debug.log('設定檔 stop-wandering-on-windows-settings.ini 不存在或讀取失敗！', 'WARNING');
+        debug(`讀取設定檔失敗：${error.message}`);
     }
 }
 
@@ -99,7 +115,7 @@ function showTime() {
     document.getElementById('second-1').textContent = second.charAt(0);
     document.getElementById('second-2').textContent = second.charAt(1);
 
-    debug(`現在時間：${hour}:${minute}:${second}，倒數計時 ${countdownSeconds} 秒。`);
+    // debug(`現在時間：${hour}:${minute}:${second}，倒數計時 ${countdownSeconds} 秒。`);
 
     if (countdownSeconds >= 0) {
         document.getElementById('countdown').textContent = countdownSeconds;
