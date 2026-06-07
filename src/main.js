@@ -24,6 +24,47 @@ function debug(message) {
 // ===== 初始化 =====
 Neutralino.init();
 
+/** 視窗恢復與顯示邏輯 */
+async function restoreWindow() {
+    debug('正在執行 restoreWindow...');
+    try {
+        const isVisible = await Neutralino.window.isVisible();
+        debug(`視窗目前狀態: ${isVisible ? '可見' : '隱藏'}`);
+
+        if (!isVisible) {
+            await Neutralino.window.show();
+        }
+
+        // 處理可能被最小化的情況
+        try {
+            await Neutralino.window.unminimize();
+        } catch (e) {
+            // 有些版本可能不支援 unminimize 或視窗未最小化時會報錯
+        }
+
+        const ratio = window.devicePixelRatio || 1;
+        const overlayWidth = Math.floor(window.screen.availWidth * ratio / 2);
+        const overlayHeight = Math.floor(window.screen.availHeight * ratio / 2);
+        const posX = overlayWidth;
+        const posY = overlayHeight;
+
+        await Neutralino.window.setSize({
+            width: overlayWidth,
+            height: overlayHeight
+        });
+        await Neutralino.window.move(posX, posY);
+
+        // 強制置頂與焦點，觸發 Z-order 刷新
+        await Neutralino.window.setAlwaysOnTop(true);
+        await Neutralino.window.focus();
+        debug('restoreWindow 執行完畢');
+    } catch (err) {
+        debug(`restoreWindow 發生錯誤: ${err.message}`);
+        // 如果 API 失效，嘗試重新載入作為最後手段
+        window.location.reload();
+    }
+}
+
 Neutralino.events.on("ready", async () => {
     debug('Neutralino 準備就緒！');
     
@@ -33,7 +74,16 @@ Neutralino.events.on("ready", async () => {
     // 註冊事件監聽
     Neutralino.events.on("trayMenuItemClicked", onTrayClicked);
     Neutralino.events.on("windowClose", () => {
+        debug('視窗關閉，程式結束');
         Neutralino.app.exit();
+    });
+
+    // 關鍵修補：監聽伺服器斷線（睡眠後常見狀況）
+    Neutralino.events.on("serverOffline", () => {
+        debug('檢測到 Neutralino 伺服器斷線，正在重新載入...');
+        setTimeout(() => {
+            window.location.reload();
+        }, 1000);
     });
 
     // 載入設定並啟動定時器
@@ -50,7 +100,7 @@ Neutralino.events.on("ready", async () => {
 /** 載入設定檔：stop-wandering-on-windows-settings.ini */
 async function loadSettings() {
     try {
-        // 使用 NL_PATH 獲取程式所在目錄的絕對路徑，避免開機啟動時工作目錄錯誤
+        // 使用 NL_PATH 獲取程式所在目錄的絕對路徑
         const settingsPath = `${NL_PATH}/stop-wandering-on-windows-settings.ini`;
         debug(`正在從此路徑讀取設定檔：${settingsPath}`);
         
@@ -60,12 +110,15 @@ async function loadSettings() {
             line = line.trim();
             if (line.charAt(0) === '[' || line.indexOf('time=') < 0) continue;
             const [_, time] = line.split("=");
-            [triggerHour, triggerMinute, triggerSecond] = time.split(":").map(Number);
-            debug(`觸發時間：${String(triggerHour).padStart(2, '0')}:${String(triggerMinute).padStart(2, '0')}:${String(triggerSecond).padStart(2, '0')}`);
+            const timeParts = time.split(":").map(Number);
+            if (timeParts.length === 3) {
+                [triggerHour, triggerMinute, triggerSecond] = timeParts;
+                debug(`觸發時間設定成功：${String(triggerHour).padStart(2, '0')}:${String(triggerMinute).padStart(2, '0')}:${String(triggerSecond).padStart(2, '0')}`);
+            }
         }
     } catch (error) {
-        Neutralino.debug.log('設定檔 stop-wandering-on-windows-settings.ini 不存在或讀取失敗！', 'WARNING');
         debug(`讀取設定檔失敗：${error.message}`);
+        Neutralino.debug.log('設定檔讀取失敗，請檢查檔案是否存在', 'WARNING');
     }
 }
 
@@ -79,24 +132,20 @@ function setTray() {
             icon: "/src/favicon.png",
             menuItems: [
                 { id: "OPEN", text: "開啟視窗" },
-                // { text: "-" },
-                // { id: "QUIT", text: "關閉" },
             ]
         };
         Neutralino.os.setTray(tray);
+        debug('系統托盤已設置');
     }
 }
 
 /** 系統托盤行為 */
 async function onTrayClicked(event) {
-    debug('onTrayClicked');
+    debug(`點擊托盤選單: ${event.detail.id}`);
     switch(event.detail.id) {
         case 'OPEN':
-            show();
+            restoreWindow();
             break;
-        // case 'QUIT':
-        //     Neutralino.app.exit();
-        //     break;
     }
 }
 
@@ -108,17 +157,23 @@ function showTime() {
     const hour = String(now.getHours()).padStart(2, '0');
     const minute = String(now.getMinutes()).padStart(2, '0');
     const second = String(now.getSeconds()).padStart(2, '0');
-    document.getElementById('hour-1').textContent = hour.charAt(0);
-    document.getElementById('hour-2').textContent = hour.charAt(1);
-    document.getElementById('minute-1').textContent = minute.charAt(0);
-    document.getElementById('minute-2').textContent = minute.charAt(1);
-    document.getElementById('second-1').textContent = second.charAt(0);
-    document.getElementById('second-2').textContent = second.charAt(1);
+    
+    const elements = {
+        'hour-1': hour.charAt(0),
+        'hour-2': hour.charAt(1),
+        'minute-1': minute.charAt(0),
+        'minute-2': minute.charAt(1),
+        'second-1': second.charAt(0),
+        'second-2': second.charAt(1),
+        'countdown': countdownSeconds >= 0 ? countdownSeconds : ''
+    };
 
-    // debug(`現在時間：${hour}:${minute}:${second}，倒數計時 ${countdownSeconds} 秒。`);
+    for (const [id, value] of Object.entries(elements)) {
+        const el = document.getElementById(id);
+        if (el) el.textContent = value;
+    }
 
     if (countdownSeconds >= 0) {
-        document.getElementById('countdown').textContent = countdownSeconds;
         countdownSeconds--;
     }
 }
@@ -132,6 +187,7 @@ function timer() {
         now.getMinutes() === triggerMinute &&
         now.getSeconds() === triggerSecond
     ) {
+        debug('到達觸發時間，開始啟動倒數');
         startCountdown();
     }
 }
@@ -143,41 +199,22 @@ function startCountdown() {
         countdownTimeoutId = undefined;
     }
     countdownTimeoutId = setTimeout(() => {
-        debug(new Date().toLocaleTimeString() + '：關機！');
+        debug(new Date().toLocaleTimeString() + '：執行關機指令！');
         Neutralino.os.execCommand('shutdown /s /t 0');
     }, 60500);  // 60.5 秒
     countdownSeconds = 60;
 
     showTime();
-    show();
+    restoreWindow();
 }
 
 
 // ===== 顯示視窗 =====
+// (舊的 show() 已整合進 restoreWindow)
 
-/** 顯示視窗 */
+/** 顯示視窗 (保持相容性) */
 async function show() {
-    const ratio = window.devicePixelRatio;  // 介面縮放比例
-
-    // 右下四分之一的尺寸
-    const overlayWidth = Math.floor(window.screen.availWidth * ratio / 2);
-    const overlayHeight = Math.floor(window.screen.availHeight * ratio / 2);
-
-    // 視窗左上角的 x 與 y 座標
-    const posX = overlayWidth;
-    const posY = overlayHeight;
-
-    // 依序執行視窗變形與移動
-    await Neutralino.window.setSize({
-        width: overlayWidth,
-        height: overlayHeight
-    });
-    await Neutralino.window.move(posX, posY);
-
-    // 設定為最頂層並顯示
-    await Neutralino.window.setAlwaysOnTop(true);
-    await Neutralino.window.show();
-    await Neutralino.window.focus();
+    return await restoreWindow();
 }
 
 
@@ -185,18 +222,20 @@ async function show() {
 
 /** 隱藏 5 秒鐘 */
 function minimize() {
+    debug('使用者點擊隱藏 5 秒');
     Neutralino.window.hide();
     setTimeout(() => {
-        show();
-    }, 5000);  // 5 秒鐘
+        restoreWindow();
+    }, 5000);
 }
 
 /** 延遲 10 分鐘 */
 function delay() {
+    debug('使用者點擊延遲 10 分鐘');
     Neutralino.window.hide();
     setTimeout(() => {
         startCountdown();
-    }, 600000);  // 10 分鐘
+    }, 600000);
     if (countdownTimeoutId) {
         clearTimeout(countdownTimeoutId);
         countdownTimeoutId = undefined;
